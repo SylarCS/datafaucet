@@ -105,6 +105,15 @@ def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
 
     return df_view
 
+def compare_schema(df_a, df_b, exclude_cols=[]):
+    assert isinstance(df_a, pyspark.sql.dataframe.DataFrame)
+    assert isinstance(df_b, pyspark.sql.dataframe.DataFrame)
+    
+    a_columns = set([col for col in df_a.dtypes if col[0] not in exclude_cols])
+    b_columns = set([col for col in df_b.dtypes if col[0] not in exclude_cols])
+
+    return a_columns == b_columns
+
 def diff(df_a, df_b, exclude_cols=[]):
     """
     Returns all columns of a which are not in b.
@@ -150,6 +159,13 @@ def add_update_column(obj, updated_colname = '_updated', tzone='UTC'):
     # add the _updated timestamp
     ts = datetime.strftime(datetime.now(pytz.timezone(tzone if tzone else 'UTC')), '%Y-%m-%d %H:%M:%S')
     obj = obj.withColumn(updated_colname, F.lit(ts).cast(T.TimestampType()))
+    return obj
+
+def add_version_column(obj, version_time=None, version_colname = '_version', tzone='UTC'):
+    # add the _version timestamp
+    version = version_time if version_time else datetime.now(pytz.timezone(tzone if tzone else 'UTC'))
+    ts = datetime.strftime(version, '%Y-%m-%d-%H-%M-%S')
+    obj = obj.withColumn(version_colname, F.lit(ts))
     return obj
 
 def add_hash_column(obj, cols=True, hash_colname = '_hash', exclude_cols=[]):

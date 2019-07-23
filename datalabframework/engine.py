@@ -1,4 +1,4 @@
-import os, time
+import os, time, copy
 
 from datalabframework import logging
 from datalabframework import elastic
@@ -12,6 +12,8 @@ from datalabframework.spark import dataframe
 from timeit import default_timer as timer
 
 import pyspark.sql.functions as F
+
+from datetime import datetime
 
 # purpose of engines
 # abstract engine init, data read and data write
@@ -222,6 +224,77 @@ class SparkEngine(Engine):
     def stop(self):
         pyspark.SparkContext.getOrCreate().stop()
 
+    def find_version(self, date=None, md=None):
+        try:
+            versions = self.list(md)
+        except:
+            return None
+        
+        versions = [version.split('=')[1] for version in versions if '_version=' in version]
+        versions.sort(reverse=True)
+
+        if date == None:
+            return versions[0]
+        else:
+            for version in versions:
+                if datetime.strptime(version, '%Y-%m-%d-%H-%M-%S') <= date:
+                    return version
+        
+        return None
+
+    def load_cdc(self, path=None, provider=None, date=None, catch_exception=True, **kargs):
+        """
+        Load the cdc database at date. If date is null, the latest one will be loaded
+
+        :param date: the query datetime object
+        """
+        
+        if isinstance(path, YamlDict):
+            md = path.to_dict()
+        elif isinstance(path, str):
+            md = get_metadata(self._rootdir, self._metadata, path, provider)
+        elif isinstance(path, dict):
+            md = path
+
+        version = self.find_version(date, md)
+        md_copy = copy.deepcopy(md)
+        md_copy['url'] += '/_version=' + version
+        obj = self.load(path=md_copy, catch_exception=catch_exception, **kargs)
+        if date != None:
+            obj = obj.filter(F.col('_updated') <= date)
+        obj = dataframe.view(obj)
+
+        return obj
+    
+    def load_raw_cdc(self, path=None, provider=None, catch_exception=True, **kargs):
+        """
+        Load all version of the cdc database
+        
+        :return: list of dataframes at each versions 
+        """
+        
+        if isinstance(path, YamlDict):
+            md = path.to_dict()
+        elif isinstance(path, str):
+            md = get_metadata(self._rootdir, self._metadata, path, provider)
+        elif isinstance(path, dict):
+            md = path
+            
+        try:
+            versions = self.list(md)
+            versions = [version for version in versions if '_version=' in version]
+        except:
+            versions = []
+            
+        dataframes = []
+        for version in versions:
+            md_copy = copy.deepcopy(md)
+            md_copy['url'] += '/' + version
+            obj = self.load(path=md_copy, catch_exception=catch_exception, **kargs)
+            dataframes.append(obj)
+            
+        return dataframes
+
     def load(self, path=None, provider=None, catch_exception=True, **kargs):
         if isinstance(path, YamlDict):
             md = path.to_dict()
@@ -378,12 +451,15 @@ class SparkEngine(Engine):
             obj = dataframe.add_datetime_columns(obj, column=md['date_column'], tzone=tzone)
             kargs['partitionBy'] = ['_date'] + kargs.get('partitionBy', md.get('options', {}).get('partitionBy', []))
 
+        if md['version_column']:
+            kargs['partitionBy'] = ['_version'] + kargs.get('partitionBy', [])
+
         if md['update_column']:
             obj = dataframe.add_update_column(obj, tzone=self._timezone)
 
         if md['hash_column']:
             obj = dataframe.add_hash_column(obj, cols=md['hash_column'],
-                                            exclude_cols=['_date', '_datetime', '_updated', '_hash', '_state'])
+                                            exclude_cols=['_date', '_datetime', '_updated', '_hash', '_state', '_version'])
 
         date_column = '_date' if md['date_partition'] else md['date_column']
         obj = dataframe.filter_by_date(
@@ -549,7 +625,8 @@ class SparkEngine(Engine):
         if mode == 'overwrite':
             if md_trg['state_column']:
                 df_src = df_src.withColumn('_state', F.lit(0))
-
+            if md_trg['version_column']:
+                df_src = dataframe.add_version_column(df_src, tzone=self._timezone)
             result = self.save(df_src, md_trg, mode=mode)
 
             log_data['time'] = timer() - timer_start
@@ -562,9 +639,28 @@ class SparkEngine(Engine):
 
         # trg dataframe (if exists)
         try:
-            df_trg = self.load(md_trg, catch_exception=False)
+            if md_trg['version_column']:
+                df_trg = self.load_cdc(md_trg, catch_exception=False)
+            else:
+                df_trg = self.load(md_trg, catch_exception=False)
         except:
             df_trg = dataframe.empty(df_src)
+
+        # if there is schema change, create new version, log notice/error and return
+        if not dataframe.compare_schema(df_src, df_trg, ['_date', '_datetime', '_updated', '_hash', '_state', '_version']):
+            if md_trg['state_column']:
+                df_src = df_src.withColumn('_state', F.lit(0))
+            if md_trg['version_column']:
+                df_src = dataframe.add_version_column(df_src, tzone=self._timezone)
+            result = self.save(df_src, md_trg, mode=mode)
+
+            log_data['time'] = timer() - timer_start
+            log_data['records_read'] = num_rows
+            log_data['records_add'] = num_rows
+            log_data['columns'] = num_cols
+
+            logging.notice(log_data) if result else logging.error(log_data)
+            return
 
         # de-dup (exclude the _updated column)
 
@@ -572,13 +668,13 @@ class SparkEngine(Engine):
         df_trg = dataframe.view(df_trg)
                                
         # capture added records
-        df_add = dataframe.diff(df_src, df_trg, ['_date', '_datetime', '_updated', '_hash', '_state'])
+        df_add = dataframe.diff(df_src, df_trg, ['_date', '_datetime', '_updated', '_hash', '_state', '_version'])
         rows_add = df_add.count()
 
         # capture deleted records
         rows_del = 0
         if md_trg['state_column']:
-            df_del = dataframe.diff(df_trg, df_src, ['_date', '_datetime', '_updated', '_hash', '_state'])
+            df_del = dataframe.diff(df_trg, df_src, ['_date', '_datetime', '_updated', '_hash', '_state', '_version'])
             rows_del = df_del.count()
 
         updated = (rows_add + rows_del) > 0
@@ -595,6 +691,11 @@ class SparkEngine(Engine):
                 df = df_add.union(df_del)
             else:
                 df = df_add
+            
+            if md_trg['version_column']:
+                version = self.find_version(md=md_trg)
+                date = datetime.strptime(version, '%Y-%m-%d-%H-%M-%S') if version else None
+                df = dataframe.add_version_column(df, version_time=date, tzone=self._timezone)
 
             result = self.save(df, md_trg, mode=mode)
         else:
@@ -635,7 +736,7 @@ class SparkEngine(Engine):
                 FileSystem = sc._gateway.jvm.org.apache.hadoop.fs.FileSystem
                 fs = FileSystem.get(URI(md['url']), sc._jsc.hadoopConfiguration())
 
-                obj = fs.listStatus(Path(md['provider_path']))
+                obj = fs.listStatus(Path(md['url']))
                 tables = [obj[i].getPath().getName() for i in range(len(obj))]
                 return tables
 

@@ -239,6 +239,7 @@ def _dict_formatting(d):
         'update_column',
         'hash_column',
         'state_column',
+        'version_column',
 
         'options',
         'mapping',
