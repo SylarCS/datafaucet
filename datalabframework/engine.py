@@ -12,6 +12,7 @@ from datalabframework.spark import dataframe
 from timeit import default_timer as timer
 
 import pyspark.sql.functions as F
+import pyspark.sql.types as T
 
 from datetime import datetime
 
@@ -226,7 +227,7 @@ class SparkEngine(Engine):
 
     def find_version(self, date=None, md=None):
         try:
-            versions = self.list(md)
+            versions = [x.name for x in self.list(md,path=md['resource_path']).select('name').collect()]
         except:
             return None
         
@@ -281,7 +282,7 @@ class SparkEngine(Engine):
             md = path
             
         try:
-            versions = self.list(md)
+            versions = [x.name for x in self.list(md,path=md['resource_path']).select('name').collect()]
             versions = [version for version in versions if '_version=' in version]
         except:
             versions = []
@@ -712,46 +713,114 @@ class SparkEngine(Engine):
 
         logging.notice(log_data) if result else logging.error(log_data)
 
-    def list(self, provider):
-        if isinstance(provider, YamlDict):
-            md = provider.to_dict()
-        elif isinstance(provider, str):
+    def list(self, provider,path=''):
+        df_schema = T.StructType([
+            T.StructField('name', T.StringType(), True),
+            T.StructField('type', T.StringType(), True)])
+
+        df_empty = self._ctx.createDataFrame(data=(), schema=df_schema)
+
+        if isinstance(provider, str):
             md = get_metadata(self._rootdir, self._metadata, None, provider)
         elif isinstance(provider, dict):
             md = provider
         else:
             logging.warning(f'{str(provider)} cannot be used to reference a provider')
-            return []
+            return df_empty
 
         try:
             if md['service'] in ['local', 'file']:
-                d = []
-                for f in os.listdir(md['provider_path']):
-                    d.append(os.path.join(md['provider_path'], f))
-                return d
-            elif md['service'] == 'hdfs':
+                lst = []
+                rootpath = os.path.join(md['provider_path'], path)
+                for f in os.listdir(rootpath):
+                    fullpath = os.path.join(rootpath, f)
+                    if os.path.isfile(fullpath):
+                        obj_type = 'FILE'
+                    elif os.path.isdir(fullpath):
+                        obj_type = 'DIRECTORY'
+                    elif os.path.islink(fullpath):
+                        obj_type = 'LINK'
+                    elif os.path.ismount(fullpath):
+                        obj_type = 'MOUNT'
+                    else:
+                        obj_type = 'UNDEFINED'
+    
+                    obj_name = f
+                    lst += [(obj_name, obj_type)]
+    
+                if lst:
+                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                else:
+                    df = df_empty
+                return df
+    
+            elif md['service'] in ['hdfs', 'minio', 's3a']:
                 sc = self._ctx._sc
                 URI = sc._gateway.jvm.java.net.URI
                 Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
                 FileSystem = sc._gateway.jvm.org.apache.hadoop.fs.FileSystem
                 fs = FileSystem.get(URI(md['url']), sc._jsc.hadoopConfiguration())
+                provider_path = md['provider_path'] if md['service'] == 'hdfs' else '/'
+                obj = fs.listStatus(Path(os.path.join(provider_path, path)))
+                lst = []
+    
+                for i in range(len(obj)):
+                    if obj[i].isFile():
+                        obj_type = 'FILE'
+                    elif obj[i].isDirectory():
+                        obj_type = 'DIRECTORY'
+                    else:
+                        obj_type = 'UNDEFINED'
+    
+                    obj_name = obj[i].getPath().getName()
+                    lst += [(obj_name, obj_type)]
 
-                obj = fs.listStatus(Path(md['url']))
-                tables = [obj[i].getPath().getName() for i in range(len(obj))]
-                return tables
+                if lst:
+                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                else:
+                    df = df_empty
+
+                return df
 
             elif md['format'] == 'jdbc':
+                # remove options from database, if any
+                database = md["database"].split('?')[0]
+                schema = md['schema']
                 if md['service'] == 'mssql':
-                    query = "(SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE') as query"
+                    query = f"""
+                            ( SELECT table_name, table_type
+                              FROM INFORMATION_SCHEMA.TABLES
+                              WHERE table_schema='{schema}'
+                            ) as query
+                            """
                 elif md['service'] == 'oracle':
-                    query = "(SELECT table_name FROM all_tables WHERE owner='schema_name') as query"
+                    query = f"""
+                            ( SELECT table_name, table_type
+                             FROM all_tables
+                             WHERE table_schema='{schema}'
+                            ) as query
+                            """
                 elif md['service'] == 'mysql':
-                    query = f"(SELECT table_name FROM information_schema.tables where table_schema='{md['database']}') as query"
-                elif md['service'] == 'pgsql':
-                    query = f"(SELECT table_name FROM information_schema.tables) as query"
+                    query = f"""
+                            ( SELECT table_name, table_type
+                              FROM information_schema.tables
+                              WHERE table_schema='{database}'
+                            ) as query
+                            """
+                elif md['service'] == 'postgres':
+                    query = f"""
+                            ( SELECT table_name, table_type
+                              FROM information_schema.tables
+                              WHERE table_schema = '{schema}'
+                            ) as query
+                            """
                 else:
                     # vanilla query ... for other databases
-                    query = f"(SELECT table_name FROM information_schema.tables) as query"
+                    query = f"""
+                                ( SELECT table_name, table_type
+                                  FROM information_schema.tables'
+                                ) as query
+                                """
 
                 obj = self._ctx.read \
                     .format('jdbc') \
@@ -763,15 +832,25 @@ class SparkEngine(Engine):
                     .load()
 
                 # load the data from jdbc
-                return [x.TABLE_NAME for x in obj.select('TABLE_NAME').collect()]
+                lst = []
+                for x in obj.select('TABLE_NAME', 'TABLE_TYPE').collect():
+                    lst.append((x.TABLE_NAME, x.TABLE_TYPE))
+ 
+                if lst:
+                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                else:
+                    df = df_empty
+    
+                return df
+    
             else:
                 logging.error({'md': md, 'error_msg': f'List resource on service "{md["service"]}" not implemented'})
-                return []
+                return df_empty
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-
-        return []
+    
+        return df_empty
 
 
 def get(name, md, rootdir):
