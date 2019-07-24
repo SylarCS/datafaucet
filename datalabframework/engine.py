@@ -849,7 +849,7 @@ class SparkEngine(Engine):
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
+
         return df_empty
 
 
