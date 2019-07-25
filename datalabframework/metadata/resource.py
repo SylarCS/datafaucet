@@ -192,9 +192,48 @@ def _build_resource_metadata(rootdir, pmd={}, rmd={}, user_md=dict()):
     #default hostname is localhost
     d['host'] = d.get('hostname', d.get('host','127.0.0.1'))
 
-    # provider path can be use as database name
-    if not d.get('database') and d.get('format') in ['jdbc', 'nosql']:
-        d['database'] = d.get('path')
+    # provider path can be use as database name, if database is undefined
+    # for some special rdbms, database and path are both required
+    # if both database and path are provided, path is interpreted as a database schema
+    # if only path or database is provided, assume that the schema is 'public'
+
+    if d['format'] == 'jdbc':
+        d['table'] = d['resource_path']
+        d['table'] = d['table'] if d['table'] else 'SELECT 0 as result where 1 = 0'
+
+        if d.get('database'):
+            d['database'] = d.get('database')
+            d['schema'] = d['provider_path'] if d['provider_path'] else ''
+        else:
+            d['database'] = d['provider_path']
+            d['schema'] = ''
+
+        #if schema is not yet defined, take the default for each service
+        if not d['schema']:
+            if  d.get('service') == 'mysql':
+                d['schema'] = d['database']
+            elif d.get('service') == 'mssql':
+                d['schema'] = 'dbo'
+            elif d.get('service') == 'postgres':
+                d['schema'] = 'public'
+            elif d.get('service') == 'oracle':
+                d['schema'] = d.get('username', '')
+            else:
+                #use postgres default if service unkown
+                d['schema'] = 'public'
+
+        # if format is jdbc and an SQL query is detected,
+        # wrap the resource path as a temp table
+        sql_query = d['table']
+        sql_query = sql_query.replace('\n', ' ')
+        sql_query = sql_query.replace('\t', ' ')
+        sql_query = sql_query.replace('\r', ' ')
+        sql_query = ' '.join(sql_query.split())
+        sql_query = sql_query.rstrip(' ')
+        sql_query = sql_query.rstrip(';')
+
+        if ' from ' in sql_query.lower():
+            d['table'] = '( {} ) as _query'.format(sql_query)
 
     d['port'] = d.get('port', _port(d['service']))
     d['url'] = _url(d)
@@ -222,6 +261,7 @@ def _dict_formatting(d):
 
         'driver',
         'database',
+        'schema',
         'username',
         'password',
         'resource_path',
