@@ -155,7 +155,7 @@ class KafkaLoggingHandler(logging.Handler):
         logging.Handler.__init__(self)
 
         self.topic = topic
-        self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers)
+        self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers, acks='all')
 
     def emit(self, record):
         msg = self.format(record).encode("utf-8")
