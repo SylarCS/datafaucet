@@ -783,7 +783,7 @@ class SparkEngine(Engine):
                 for f in os.listdir(md['provider_path']):
                     d.append(os.path.join(md['provider_path'], f))
                 return d
-            elif md['service'] == 'hdfs':
+            elif md['service'] in ['hdfs', 'minio', 's3a']:
                 sc = self._ctx._sc
                 URI = sc._gateway.jvm.java.net.URI
                 Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
