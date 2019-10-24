@@ -8,7 +8,7 @@ import logging as python_logging
 from datafaucet import logging
 from datafaucet import elastic
 
-from datafaucet.resources import Resource, get_local
+from datafaucet.resources import Resource, get_local, urnparse
 
 from datafaucet.yaml import YamlDict, to_dict
 
@@ -65,10 +65,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             spark_session = pyspark.sql.SparkSession.builder.getOrCreate()
             hadoop_version = spark_session.sparkContext._gateway.jvm.org.apache.hadoop.util.VersionInfo.getVersion()
             hadoop_detect_from = 'spark'
+            self._stop(spark_session)
         except Exception as e:
             pass
-
-        self._stop(spark_session)
 
         if hadoop_version is None:
             hadoop_version = get_hadoop_version_from_system()
@@ -160,18 +159,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             elif s == 'postgres':
                 packages.append(f'org.postgresql:postgresql:{v}')
             elif s == 'oracle':
-                vv = v.split('.') if v else [0,0,0,0]
-                repositories.append('http://maven.icm.edu.pl/artifactory/repo/')
-                repositories.append('https://maven.xwiki.org/externals')
-                if vv[0]=='12' and vv[1]=='2':
-                    packages.append(f'com.oracle.jdbc:ojdbc8:{v}')
-                elif vv[0]=='12' and vv[1]=='1':
-                    packages.append(f'com.oracle.jdbc:ojdbc7:{v}')
-                elif vv[0]=='11':
-                    packages.append(f'com.oracle.jdbc:ojdbc6:{v}')
-                else:
-                    logging.warning(f'could not autodetect the oracle '
-                                    'ojdbc driver to install for {s}, version {v}')
+                packages.append(f'com.oracle.ojdbc:ojdbc8:{v}')
             elif s == 'mssql':
                 packages.append(f'com.microsoft.sqlserver:mssql-jdbc:{v}')
             elif s == 'mongodb':
@@ -184,6 +172,12 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 else:
                     logging.warning('The Hadoop installation is not detected. '
                                     'Could not load hadoop-aws (s3a) package ')
+            elif s == 'file':
+                pass
+            elif s == 'hdfs':
+                pass
+            else:
+                logging.warning(f'could not autodetect driver to install for {s}, version {v}')
 
         #### submit: packages
         conf = submit_objs['conf']
@@ -234,12 +228,12 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             if sys.executable and not os.environ.get(e):
                 os.environ[e] = sys.executable
 
-    def __init__(self, session_name=None, session_id=0, master = 'local[*]', 
-                 timezone=None, jars=None, packages=None, pyfiles=None, files=None, 
+    def __init__(self, session_name=None, session_id=0, master = 'local[*]',
+                 timezone=None, jars=None, packages=None, pyfiles=None, files=None,
                  repositories = None, services=None, conf=None) :
 
         #call base class
-        # stop the previous instance, 
+        # stop the previous instance,
         # register self a the new instance
         super().__init__('spark', session_name, session_id)
 
@@ -293,7 +287,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         # stop the current session if running
         self._stop()
-        
+
         # start spark
         spark_session = self.start_context(conf)
 
@@ -309,7 +303,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
             # store the spark session
             self.context = spark_session
-            
+
             # session is running
             self.stopped = False
 
@@ -318,10 +312,10 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             del pyspark.sql.SQLContext._instantiatedContext
         except:
             pass
-    
+
         if spark_context is None:
             spark_context = spark_session.sparkContext
-    
+
         pyspark.sql.SQLContext._instantiatedContext = None
         sql_ctx = pyspark.sql.SQLContext(spark_context, spark_session)
         return sql_ctx
@@ -331,20 +325,20 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             # init the spark session
             session = pyspark.sql.SparkSession.builder.config(conf=conf).getOrCreate()
-        
+
             # fix SQLContext for back compatibility
             self.initialize_spark_sql_context(session, session.sparkContext)
-    
+
             # pyspark set log level method
             # (this will not suppress WARN before starting the context)
             session.sparkContext.setLogLevel("ERROR")
-            
+
             # set the engine version
             self.version = session.version
-            
+
             # set environment
             self.env = self.get_environment()
-            
+
             return session
         except Exception as e:
             print(e)
@@ -363,7 +357,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             'PYSPARK_SUBMIT_ARGS',
             'SPARK_DIST_CLASSPATH',
         ]
-    
+
         return YamlDict({v: os.environ.get(v) for v in vars})
 
 
@@ -373,21 +367,21 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             sc_from_session = spark_session.sparkContext if spark_session else None
             sc_from_engine = self.context.sparkContext if self.context else None
             sc_from_module = pyspark.SparkContext._active_spark_context or None
-            
+
             scs = [
                 sc_from_session,
                 sc_from_engine,
                 sc_from_module
             ]
-            
+
             if self.context:
                 self.context.stop()
-    
+
             if spark_session:
                 spark_session.stop()
 
             cls = pyspark.SparkContext
-            
+
             for sc in scs:
                 if sc:
                     try:
@@ -395,7 +389,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                         sc._gateway.shutdown()
                     except Exception as e:
                         pass
-                    
+
             cls._active_spark_context = None
             cls._gateway = None
             cls._jvm = None
@@ -403,63 +397,25 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             print(e)
             logging.warning(f'Could not fully stop the {self.engine_type} context')
 
+    def load_log(self, md, options, ts_start):
+        ts_end = timer()
 
-    def load_plus(self, path=None, provider=None, catch_exception=True, **kwargs):
-        md = Resource(path, provider, **kwargs)
-    
-        core_start = timer()
-        obj = self.load_dataframe(md, catch_exception, **kwargs)
-        core_end = timer()
-        if obj is None:
-            return obj
-    
-        prep_start = timer()
-        #date_column = '_date' if md['date_partition'] else md['date_column']
-        obj = dataframe.filter_by_date(
-            obj,
-            date_column,
-            md['date_start'],
-            md['date_end'],
-            md['date_window'])
-    
-        # partition and sorting (hmmm, needed?)
-        if date_column and date_column in obj.columns:
-            obj = obj.repartition(date_column)
-    
-        if '_updated' in obj.columns:
-            obj = obj.sortWithinPartitions(F.desc('_updated'))
-    
-        num_rows = obj.count()
-        num_cols = len(obj.columns)
-    
-        obj = dataframe.cache(obj, md['cache'])
-    
-        prep_end = timer()
-    
         log_data = {
             'md': md,
-            'mode': kwargs.get('mode', md.get('options', {}).get('mode')),
-            'records': num_rows,
-            'columns': num_cols,
-            'time': prep_end - core_start,
-            'time_core': core_end - core_start,
-            'time_prep': prep_end - prep_start
+            'options': options,
+            'time': ts_end - ts_start
         }
-        logging.info(log_data) if obj is not None else logging.error(log_data)
-    
-        obj.__name__ = path
-        return obj
-
+        logging.info('load', extra=log_data)
 
     def load_with_pandas(self, kwargs):
         logging.warning("Fallback dataframe reader")
-    
+
         # conversion of *some* pyspark arguments to pandas
         kwargs.pop('inferSchema', None)
-    
+
         kwargs['header'] = 'infer' if kwargs.get('header') else None
         kwargs['prefix'] = '_c'
-    
+
         return kwargs
     
     def load_csv(self, path=None, provider=None, *args,
@@ -484,6 +440,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         local = self.is_spark_local()
 
+        # start the timer for logging
+        ts_start = timer()
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
@@ -504,13 +462,13 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load_parquet(self, path=None, provider=None, *args,
@@ -534,6 +492,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         local = self.is_spark_local()
 
+        # start the timer for logging
+        ts_start = timer()
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
@@ -551,13 +511,13 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load_json(self, path=None, provider=None, *args,
@@ -582,6 +542,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         local = self.is_spark_local()
 
+        # start the timer for logging
+        ts_start = timer()
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and options['lines']:
@@ -602,13 +564,13 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load_jdbc(self, path=None, provider=None, *args, **kwargs):
@@ -622,6 +584,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         options =  md['options']
 
+        # start the timer for logging
+        ts_start = timer()
         try:
             if md['service'] in ['sqlite', 'mysql', 'postgres', 'mssql', 'clickhouse', 'oracle']:
                 obj = self.context.read \
@@ -645,6 +609,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load_mongo(self, path=None, provider=None, *args, **kwargs):
@@ -657,6 +622,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 **kwargs)
 
         options = md['options']
+
+        # start the timer for logging
+        ts_start = timer()
 
         try:
             if md['service'] == 'mongodb':
@@ -678,6 +646,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load_event_log(self, path=None, provider=None, versionAsOf=None, *args, **kwargs):
@@ -690,6 +659,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 **kwargs)
 
         options = md['options']
+
+        # start the timer for logging
+        ts_start = timer()
 
         try:
             if md['service'] in ['hdfs', 's3a']:
@@ -711,6 +683,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         except Exception as e:
             logging.error(str(e), extra={'md': md})
 
+        self.load_log(md, options, ts_start)
         return obj
 
     def load(self, path=None, provider=None, *args, format=None, **kwargs):
@@ -739,72 +712,26 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     extra={'md': to_dict(md)})
         return None
 
+    def save_log(self, md, options, ts_start):
+        ts_end = timer()
 
-    def save_plus(self, obj, path=None, provider=None, **kwargs):
-        md = Resource(path, provider, **kwargs)
-    
-        prep_start = timer()
-        options = md['options'] or {}
-    
-        if md['date_partition'] and md['date_column']:
-            tzone = 'UTC' if self._timestamps == 'naive' else self._timezone
-            obj = dataframe.add_datetime_columns(obj, column=md['date_column'], tzone=tzone)
-            kwargs['partitionBy'] = ['_date'] + kwargs.get('partitionBy', options.get('partitionBy', []))
-    
-        if md['update_column']:
-            obj = dataframe.add_update_column(obj, tzone=self._timezone)
-    
-        if md['hash_column']:
-            obj = dataframe.add_hash_column(obj, cols=md['hash_column'],
-                                            exclude_cols=['_date', '_datetime', '_updated', '_hash', '_state'])
-    
-        date_column = '_date' if md['date_partition'] else md['date_column']
-        obj = dataframe.filter_by_date(
-            obj,
-            date_column,
-            md['date_start'],
-            md['date_end'],
-            md['date_window'])
-    
-        obj = dataframe.cache(obj, md['cache'])
-    
-        num_rows = obj.count()
-        num_cols = len(obj.columns)
-    
-        # force 1 file per partition, just before saving
-        obj = obj.repartition(1, *kwargs['partitionBy']) if kwargs.get('partitionBy') else obj.repartition(1)
-        # obj = obj.coalesce(1)
-    
-        prep_end = timer()
-    
-        core_start = timer()
-        result = self.save_dataframe(obj, md, **kwargs)
-        core_end = timer()
-    
         log_data = {
-            'md': dict(md),
-            'mode': kwargs.get('mode', options.get('mode')),
-            'records': num_rows,
-            'columns': num_cols,
-            'time': core_end - prep_start,
-            'time_core': core_end - core_start,
-            'time_prep': prep_end - prep_start
+            'md': md,
+            'options': options,
+            'time': ts_end - ts_start
         }
-    
-        logging.info(log_data) if result else logging.error(log_data)
-    
-        return result
-    
+        logging.info('save', extra=log_data)
+
     def is_spark_local(self):
-        return self.conf.get('spark.master').startswith('local[')    
-    
+        return self.conf.get('spark.master').startswith('local[')
+
     def directory_to_file(self, path):
         if os.path.exists(path) and os.path.isfile(path):
             return
-    
+
         dirname = os.path.dirname(path)
         basename = os.path.basename(path)
-    
+
         filename = list(filter(lambda x: x.startswith('part-'), os.listdir(path)))
         if len(filename) != 1:
             if len(filename)>1:
@@ -812,30 +739,32 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             return
         else:
             filename = filename[0]
-    
+
         shutil.move(os.path.join(path, filename), dirname)
         if os.path.exists(path) and os.path.isdir(path):
             shutil.rmtree(path)
-    
+
         shutil.move(os.path.join(dirname, filename), os.path.join(dirname, basename))
         return
-  
-    def save_parquet(self, obj, path=None, provider=None, *args, 
+
+    def save_parquet(self, obj, path=None, provider=None, *args,
                  mode=None, **kwargs):
 
+        result = True
         md = Resource(
-                path, 
-                provider, 
-                format='parquet', 
-                mode=mode, 
+                path,
+                provider,
+                format='parquet',
+                mode=mode,
                 **kwargs)
         options = md['options']
-        
+
         # after collecting from metadata, or method call, define defaults
         options['mode'] = options['mode'] or 'overwrite'
-                               
+
         local = self.is_spark_local()
-                               
+
+        ts_start = timer()
         try:
             #three approaches: file-local, local+cluster, and service
             if md['service'] == 'file' and local:
@@ -844,14 +773,14 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .mode(options['mode'])\
                     .options(**options)\
                     .parquet(md['url'])
-                
+
             elif md['service'] == 'file':
                 if os.path.exists(md['url']) and os.path.isdir(md['url']):
                     shutil.rmtree(md['url'])
 
                 # save with pandas
                 obj.toPandas().to_parquet(
-                    md['url'], 
+                    md['url'],
                     mode=options['mode'])
 
             elif md['service'] in ['hdfs', 's3a']:
@@ -862,39 +791,45 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .parquet(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False     
-                               
+                result = False
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
+            result = False
+
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
-        return True
 
-    def save_csv(self, obj, path=None, provider=None, *args, 
+        self.save_log(md, options, ts_start)
+        return result
+
+    def save_csv(self, obj, path=None, provider=None, *args,
                  mode=None, sep=None, header=None, **kwargs):
 
+        result = True
+
         md = Resource(
-                path, 
-                provider, 
-                format='csv', 
-                mode=mode, 
-                sep=sep, 
-                header=header, 
+                path,
+                provider,
+                format='csv',
+                mode=mode,
+                sep=sep,
+                header=header,
                 **kwargs)
 
         options = md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['header'] = options['header'] or 'true'
         options['sep'] = options['sep'] or ','
         options['mode'] = options['mode'] or 'overwrite'
-                               
+
         local = self.is_spark_local()
-                               
+
+        ts_start = timer()
         try:
             #three approaches: file+local, file+cluster, and service
             if md['service'] == 'file' and local:
@@ -911,9 +846,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
                 # save with pandas
                 obj.toPandas().to_csv(
-                    md['url'], 
-                    mode=options['mode'], 
-                    header=options['header'], 
+                    md['url'],
+                    mode=options['mode'],
+                    header=options['header'],
                     sep=options['sep'])
 
             elif md['service'] in ['hdfs', 's3a']:
@@ -924,20 +859,25 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .csv(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False     
-                               
+                result = False
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
+            result = False
+
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
-        return True
+
+        self.save_log(md, options, ts_start)
+        return result
 
     def save_json(self, obj, path=None, provider=None, *args,
                  mode=None, lines=None, **kwargs):
+
+        result = True
 
         md = Resource(
                 path,
@@ -955,6 +895,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         local = self.is_spark_local()
 
+        ts_start = timer()
         try:
             #three approaches: local, cluster, and service
             if local and md['service'] == 'file' and options['lines']:
@@ -987,17 +928,22 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False
+                result = False
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
+            result = False
+
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
 
-        return True
+        self.save_log(md, options, ts_start)
+        return result
 
     def save_jdbc(self, obj, path=None, provider=None, *args, mode=None, **kwargs):
+
+        result = True
         md = Resource(
                 path,
                 provider,
@@ -1010,6 +956,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         # after collecting from metadata, or method call, define csv defaults
         options['mode'] = options['mode'] or 'overwrite'
 
+        ts_start = timer()
         try:
             #three approaches: local, cluster, and service
             if md['service'] in ['sqlite', 'mysql', 'postgres', 'mssql', 'clickhouse', 'oracle']:
@@ -1027,14 +974,17 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False
+                result = False
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
+            result = False
+
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
 
+        self.save_log(md, options, ts_start)
         return True
 
     def save_mongo(self, path=None, provider=None, *args, **kwargs):
@@ -1046,6 +996,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         options = md['options']
 
+        ts_start = timer()
         try:
             if md['service'] == 'mongodb':
                 obj.write \
@@ -1066,6 +1017,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
 
+        self.save_log(md, options, ts_start)
         return True
 
     def save_event_log(self, obj, path=None, provider=None, *args,
@@ -1081,6 +1033,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         # after collecting from metadata, or method call, define defaults
         options['mode'] = options['mode'] or 'append'
+
+        ts_start = timer()
         try:
             if md['service'] in ['hdfs', 's3a']:
                 obj = dataframe.add_version_column(obj)
@@ -1103,6 +1057,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
 
+        self.save_log(md, options, ts_start)
         return True
 
     def save(self, obj, path=None, provider=None, *args, format=None, mode=None, **kwargs):
@@ -1259,18 +1214,22 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         version = versions.agg(F.max('version').alias('max')).collect()
         return version[0].max if version else None
 
-    def list(self, provider, path=''):
+    def list(self, provider, path=None, **kwargs):
         df_schema = T.StructType([
             T.StructField('name', T.StringType(), True),
             T.StructField('type', T.StringType(), True)])
 
         df_empty = self.context.createDataFrame(data=(), schema=df_schema)
-        md = Resource(path, provider)
+
+        md = Resource(path,provider,**kwargs)
 
         try:
             if md['service'] in ['local', 'file']:
                 lst = []
+                #current change
                 rootpath = os.path.join(md['url'], path)
+                #incoming change
+                rootpath = md['url']
                 for f in os.listdir(rootpath):
                     fullpath = os.path.join(rootpath, f)
                     if os.path.isfile(fullpath):
@@ -1294,13 +1253,33 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
                 return df
 
-            elif md['service'] in ['hdfs', 'minio', 's3a']:
+            elif md['service'] in ['hdfs', 's3a']:
                 sc = self.context._sc
                 URI = sc._gateway.jvm.java.net.URI
                 Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
                 FileSystem = sc._gateway.jvm.org.apache.hadoop.fs.FileSystem
+                # current change
                 fs = FileSystem.get(URI(md['url']), sc._jsc.hadoopConfiguration())
                 obj = fs.listStatus(Path(md['url']))
+                # incoming change
+                parsed = urnparse(md['url'])
+                if md['service']=='s3a':
+                    path = parsed.path.split('/')
+                    url = 's3a://'+path[0]
+                    path = '/'+ '/'.join(path[1:]) if len(path)>1 else '/'
+
+                if md['service']=='hdfs':
+                    host_port = f"{parsed.host}:{parsed.port}" if parsed.port else parsed.hosts
+                    url = f'hdfs://{host_port}'
+                    path = '/' + parsed.path
+
+                try:
+                    fs = FileSystem.get(URI(url), sc._jsc.hadoopConfiguration())
+                    obj = fs.listStatus(Path(path))
+                except:
+                    logging.error(f'An error occurred accessing {url}{path}')
+                    obj = []
+
                 lst = []
                 for i in range(len(obj)):
                     if obj[i].isFile():
@@ -1322,8 +1301,28 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
             elif md['format'] == 'jdbc':
                 # remove options from database, if any
+
                 database = md["database"].split('?')[0]
                 schema = md['schema']
+                table = md['table']
+
+                if database and table:
+                    try:
+                        obj = self.context.read \
+                        .format('jdbc') \
+                        .option('url', md['url']) \
+                        .option("dbtable", table) \
+                        .option("driver", md['driver']) \
+                        .option("user", md['user']) \
+                        .option('password', md['password']) \
+                        .load()
+                        info = [(i.name, i.dataType.simpleString()) for i in obj.schema]
+                    except:
+                        info = []
+
+                    if info:
+                        return self.context.createDataFrame(info, ['name', 'type'])
+
                 if md['service'] == 'mssql':
                     query = f"""
                             ( SELECT table_name, table_type
