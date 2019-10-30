@@ -245,7 +245,7 @@ class SparkEngine(Engine):
 
         return None
 
-    def load_cdc(self, path=None, provider=None, date=None, catch_exception=True, **kargs):
+    def load_cdc(self, path=None, provider=None, date=None, catch_exception=False, **kargs):
         """
         Load the cdc database at date. If date is null, the latest one will be loaded
 
@@ -269,7 +269,7 @@ class SparkEngine(Engine):
 
         return obj
 
-    def load_raw_cdc(self, path=None, provider=None, catch_exception=True, **kargs):
+    def load_raw_cdc(self, path=None, provider=None, catch_exception=False, **kargs):
         """
         Load all version of the cdc database
 
@@ -298,7 +298,7 @@ class SparkEngine(Engine):
 
         return dataframes
 
-    def load(self, path=None, provider=None, catch_exception=True, **kargs):
+    def load(self, path=None, provider=None, catch_exception=False, **kargs):
         if isinstance(path, YamlDict):
             md = path.to_dict()
         elif isinstance(path, str):
@@ -340,7 +340,7 @@ class SparkEngine(Engine):
         prep_end = timer()
 
         log_data = {
-            'md': dict(md),
+            'md': {i: md[i] for i in md if 'password' not in i},
             'mode': kargs.get('mode', md.get('options', {}).get('mode')),
             'records': num_rows,
             'columns': num_cols,
@@ -352,7 +352,7 @@ class SparkEngine(Engine):
 
         return obj
 
-    def load_dataframe(self, md, catch_exception=True, **kargs):
+    def load_dataframe(self, md, catch_exception=False, **kargs):
         obj = None
         options = md['options']
 
@@ -516,7 +516,7 @@ class SparkEngine(Engine):
         core_end = timer()
 
         log_data = {
-            'md': dict(md),
+            'md': {i: md[i] for i in md if 'password' not in i},
             'mode': kargs.get('mode', md.get('options', {}).get('mode')),
             'records': num_rows,
             'columns': num_cols,
@@ -604,8 +604,11 @@ class SparkEngine(Engine):
                 logging.error({'md': md, 'error_msg': f'Unknown service "{md["service"]}"'})
                 return False
         except Exception as e:
-            logging.error({'md': md, 'error_msg': str(e)})
-            raise e
+            if catch_exception:
+                logging.error({'md': md, 'error': str(e)})
+                return None
+            else:
+                raise e
 
         return True
 
