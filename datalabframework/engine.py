@@ -463,7 +463,7 @@ class SparkEngine(Engine):
 
         return obj
 
-    def save(self, obj, path=None, provider=None, **kargs):
+    def save(self, obj, path=None, provider=None, catch_exception=False, **kargs):
 
         if isinstance(path, YamlDict):
             md = path.to_dict()
@@ -512,7 +512,7 @@ class SparkEngine(Engine):
         prep_end = timer()
 
         core_start = timer()
-        result = self.save_dataframe(obj, md, **kargs)
+        result = self.save_dataframe(obj, md, catch_exception, **kargs)
         core_end = timer()
 
         log_data = {
@@ -529,7 +529,7 @@ class SparkEngine(Engine):
 
         return result
 
-    def save_dataframe(self, obj, md, **kargs):
+    def save_dataframe(self, obj, md, catch_exception=False, **kargs):
 
         options = md.get('options', {})
 
