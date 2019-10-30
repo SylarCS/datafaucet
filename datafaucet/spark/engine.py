@@ -1226,9 +1226,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             if md['service'] in ['local', 'file']:
                 lst = []
-                #current change
-                rootpath = os.path.join(md['url'], path)
-                #incoming change
                 rootpath = md['url']
                 for f in os.listdir(rootpath):
                     fullpath = os.path.join(rootpath, f)
@@ -1258,10 +1255,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 URI = sc._gateway.jvm.java.net.URI
                 Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
                 FileSystem = sc._gateway.jvm.org.apache.hadoop.fs.FileSystem
-                # current change
-                fs = FileSystem.get(URI(md['url']), sc._jsc.hadoopConfiguration())
-                obj = fs.listStatus(Path(md['url']))
-                # incoming change
                 parsed = urnparse(md['url'])
                 if md['service']=='s3a':
                     path = parsed.path.split('/')
@@ -1271,7 +1264,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 if md['service']=='hdfs':
                     host_port = f"{parsed.host}:{parsed.port}" if parsed.port else parsed.hosts
                     url = f'hdfs://{host_port}'
-                    path = '/' + parsed.path
+                    path = parsed.path
 
                 try:
                     fs = FileSystem.get(URI(url), sc._jsc.hadoopConfiguration())
@@ -1301,7 +1294,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
             elif md['format'] == 'jdbc':
                 # remove options from database, if any
-
                 database = md["database"].split('?')[0]
                 schema = md['schema']
                 table = md['table']
