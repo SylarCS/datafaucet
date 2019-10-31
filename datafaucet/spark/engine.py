@@ -401,7 +401,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         ts_end = timer()
 
         log_data = {
-            'md': md,
+            'md': {i: md[i] for i in md if i != 'password'},
             'options': options,
             'time': ts_end - ts_start
         }
@@ -716,7 +716,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         ts_end = timer()
 
         log_data = {
-            'md': md,
+            'md': {i: md[i] for i in md if i != 'password'},
             'options': options,
             'time': ts_end - ts_start
         }

@@ -196,7 +196,8 @@ class Project(metaclass = Singleton):
             self._username,
             self._script_path,
             self._repo['name'],
-            self._repo['hash']
+            self._repo['hash'],
+            self._profile_name
         )
         
         # set loaded to True

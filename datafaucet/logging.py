@@ -60,9 +60,10 @@ class LoggerAdapter(logging.LoggerAdapter):
             'dfc_reponame': None,
             'dfc_repohash': None,
             'dfc_funcname': None,
+            'dfc_profile': None,
             'dfc_data': {}
         }
-        
+
         self.extra.update(extra)
 
     def process(self, msg, kwargs):
@@ -136,12 +137,13 @@ class JsonFormatter(logging.Formatter):
             'username': logr.dfc_username,
             'filepath': logr.dfc_filepath,
             'funcname': logr.dfc_funcname,
+            'profile': logr.dfc_profile,
             'message': logr.msg,
             'data': logr.dfc_data
         }
 
         return json.dumps(log_record, default=_json_default)
-    
+
 class KafkaLoggingHandler(logging.Handler):
 
     def __init__(self, topic, bootstrap_servers):
@@ -252,12 +254,13 @@ def init_file(logger, level, md):
         print(f'Cannot open log file {path} for writing.')
         
 def init(
-    md=None, 
-    sid=None, 
-    username=None, 
-    filepath=None, 
-    reponame=None, 
-    repohash=None):
+    md=None,
+    sid=None,
+    username=None,
+    filepath=None,
+    reponame=None,
+    repohash=None,
+    profile=None):
     
     global _logger
 
@@ -289,7 +292,8 @@ def init(
         'dfc_repohash': repohash,
         'dfc_reponame': reponame,
         'dfc_username': username,
-        'dfc_filepath': filepath
+        'dfc_filepath': filepath,
+        'dfc_profile': profile
     }
     
     # setup adapter
