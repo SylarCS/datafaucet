@@ -445,7 +445,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
-                obj = self.context.read.options(**options).csv(md['url'])
+                obj = self.context.read.format('csv').load(md['url'], **options)
             elif md['service'] == 'file':
                 logging.warning(
                     f'local file + spark cluster: loading using pandas reader',
@@ -457,7 +457,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                         header=options['header'])
                 obj = self.context.createDataFrame(df)
             elif md['service'] in ['hdfs', 's3a']:
-                obj = self.context.read.options(**options).csv(md['url'])
+                obj = self.context.read.format('csv').load(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -497,7 +497,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
-                obj = self.context.read.options(**options).parquet(md['url'])
+                obj = self.context.read.format('parquet').load(md['url'], **options)
             elif md['service'] == 'file':
                 logging.warning(
                     f'local file + spark cluster: loading using pandas reader',
@@ -506,7 +506,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 df = pd.read_parquet(md['url'])
                 obj = self.context.createDataFrame(df)
             elif md['service'] in ['hdfs', 's3a']:
-                obj = self.context.read.options(**options).parquet(md['url'])
+                obj = self.context.read.format('parquet').load(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -547,7 +547,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and options['lines']:
-                obj = self.context.read.options(**options).json(md['url'])
+                obj = self.context.read.format('json').load(md['url'], **options)
             elif md['service'] == 'file':
                 # fallback to the pandas reader,
                 # then convert to spark
@@ -559,7 +559,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                         lines=options['lines'])
                 obj = self.context.createDataFrame(df)
             elif md['service'] in ['hdfs', 's3a']:
-                obj = self.context.read.options(**options).json(md['url'])
+                obj = self.context.read.format('json').load(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -582,7 +582,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 format='jdbc',
                 **kwargs)
 
-        options =  md['options']
+        options = md['options']
 
         # start the timer for logging
         ts_start = timer()
@@ -595,9 +595,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .option("driver", md['driver']) \
                     .option("user", md['user']) \
                     .option('password', md['password']) \
-                    .options(**options)
-                # load the data from jdbc
-                obj = obj.load(**kwargs)
+                    .load(**options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -631,10 +629,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 obj = self.context.read \
                     .format('mongo') \
                     .option('uri', md['url']) \
-                    .options(**options)
-
-                # load the data
-                obj = obj.load(**kwargs)
+                    .load(**options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -671,7 +666,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     return obj
                 version = version.strftime('%Y-%m-%d-%H-%M-%S')
                 url = f'{md["url"]}/_version={version}'
-                obj = self.context.read.options(**options).parquet(url)
+                obj = self.context.read.format('parquet').load(url, **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -768,11 +763,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             #three approaches: file-local, local+cluster, and service
             if md['service'] == 'file' and local:
-                obj.coalesce(1).write\
-                    .format('parquet')\
-                    .mode(options['mode'])\
-                    .options(**options)\
-                    .parquet(md['url'])
+                obj.coalesce(1).write.format('parquet').save(md['url'], **options)
 
             elif md['service'] == 'file':
                 if os.path.exists(md['url']) and os.path.isdir(md['url']):
@@ -784,11 +775,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     mode=options['mode'])
 
             elif md['service'] in ['hdfs', 's3a']:
-               obj.write\
-                    .format('parquet')\
-                    .mode(options['mode'])\
-                    .options(**options)\
-                    .parquet(md['url'])
+               obj.write.format('parquet').save(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -833,11 +820,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             #three approaches: file+local, file+cluster, and service
             if md['service'] == 'file' and local:
-                obj.coalesce(1).write\
-                    .format('csv')\
-                    .mode(options['mode'])\
-                    .options(**options)\
-                    .csv(md['url'])
+                obj.coalesce(1).write.format('csv').save(md['url'], **options)
                 self.directory_to_file(md['url'])
 
             elif md['service'] == 'file':
@@ -852,11 +835,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     sep=options['sep'])
 
             elif md['service'] in ['hdfs', 's3a']:
-                obj.write\
-                    .format('csv')\
-                    .mode(options['mode'])\
-                    .options(**options)\
-                    .csv(md['url'])
+                obj.write.format('csv').save(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -903,7 +882,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .format('json')\
                     .mode(options['mode'])\
                     .options(**options)\
-                    .json(md['url'])
+                    .save(md['url'], **options)
                 self.directory_to_file(md['url'])
 
             elif md['service'] == 'file':
@@ -919,11 +898,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     lines=options['lines'])
 
             elif md['service'] in ['hdfs', 's3a']:
-                obj.write\
-                    .format('json')\
-                    .mode(options['mode'])\
-                    .options(**options)\
-                    .json(md['url'])
+                obj.write.format('json').save(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -967,9 +942,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .option("driver", md['driver']) \
                     .option("user", md['user']) \
                     .option('password', md['password']) \
-                    .options(**options) \
-                    .mode(options['mode'])\
-                    .save()
+                    .save(**options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -1002,9 +975,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 obj.write \
                     .format('mongo') \
                     .option('uri', md['url']) \
-                    .options(**options) \
-                    .mode(options['mode']) \
-                    .save(**kwargs)
+                    .save(**options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -1038,13 +1009,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         try:
             if md['service'] in ['hdfs', 's3a']:
                 obj = dataframe.add_version_column(obj)
-                partitionBy = ['_version'] + (partitionBy or [])
-                obj.write\
-                    .format('parquet')\
-                    .mode(options['mode'])\
-                    .partitionBy(partitionBy)\
-                    .options(**options)\
-                    .parquet(md['url'])
+                options['partitionBy'] = ['_version'] + (partitionBy or [])
+                obj.write.format('parquet').save(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
