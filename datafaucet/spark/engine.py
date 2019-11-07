@@ -667,6 +667,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 version = version.strftime('%Y-%m-%d-%H-%M-%S')
                 url = f'{md["url"]}/_version={version}'
                 obj = self.context.read.format('parquet').load(url, **options)
+                obj = dataframe.view(obj, versionAsOf)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -991,8 +992,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         self.save_log(md, options, ts_start)
         return True
 
-    def save_event_log(self, obj, path=None, provider=None, *args,
-                    mode=None, partitionBy=None, **kwargs):
+    def save_event_log(self, obj, path=None, provider=None, mode=None,
+                        store_method='cdc', replaceWhere=None, **kwargs):
 
         md = Resource(
                 path,
@@ -1008,9 +1009,28 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         ts_start = timer()
         try:
             if md['service'] in ['hdfs', 's3a']:
-                obj = dataframe.add_version_column(obj)
-                options['partitionBy'] = ['_version'] + (partitionBy or [])
-                obj.write.format('parquet').save(md['url'], **options)
+                if store_method == 'snapshots' or options['mode'] == 'overwrite':
+                    event = dataframe.add_version_column(obj)
+                    options['partitionBy'] = ['_version'] + (options['partitionBy'] or [])
+                elif store_method == 'cdc':
+                    current_view = self.load_event_log(path, provider)
+                    diff_data = dataframe.diff(obj, current_view, ['_version', '_updated', '_state'])
+                    if diff_data:
+                        df_del = diff_data[0].withColumn('_state', F.lit(0))
+                        df_add = diff_data[1].withColumn('_state', F.lit(1))
+                        event = df_del.union(df_add)
+                        version = self.find_version(md)
+                        event = dataframe.add_version_column(event, version_time=version)
+                    else:
+                        event = obj.withColumn('_state', F.lit(1))
+                        event = dataframe.add_version_column(obj)
+                    event = dataframe.add_update_column(event)
+                    options['partitionBy'] = ['_version', '_updated'] + (options['partitionBy'] or [])
+                else:
+                    logging.error(f'Invalid store method "{store_method}"',
+                        extra={'md': to_dict(md)})
+                    return False
+                event.write.format('parquet').save(md['url'], **options)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',

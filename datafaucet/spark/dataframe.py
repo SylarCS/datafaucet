@@ -72,7 +72,7 @@ def common_columns(df_a, df_b=None, exclude_cols=[]):
     # as provided by df_b or df_a column method
     return [x for x in cols if x in c]
 
-def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
+def view(df, timestamp, state_col='_state', updated_col='_updated', hash_col='_hash'):
     """
     Calculate a view from a log of events by performing the following actions:
         - squashing the events for each entry record to the last one
@@ -80,52 +80,66 @@ def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
     """
 
     c = set(df.columns).difference({state_col, updated_col, hash_col})
-    colnames = [x for x in df.columns if x in c] 
+    colnames = [x for x in df.columns if x in c]
 
     if updated_col not in df.columns:
         return df
-    
+
     if state_col not in df.columns:
         return df
-    
+
     selected_columns = colnames + ['_last.*']
     groupby_columns = colnames
-    
+
     # groupby hash_col first if available
     if hash_col in df.columns:
         selected_columns = selected_columns + [hash_col]
         groupby_columns = [hash_col] + groupby_columns
-    
+
+    df = df.filter(F.col(updated_col) <= timestamp)
     row_groups = df.groupBy(groupby_columns)
-    get_sorted_array = F.sort_array(F.collect_list(F.struct( F.col(updated_col), F.col(state_col))),asc = False)
+    get_sorted_array = F.sort_array(F.collect_list(F.struct(F.col(updated_col), F.col(state_col))), asc = False)
     df_view = row_groups.agg(get_sorted_array.getItem(0).alias('_last')).select(*selected_columns)
-    df_view = df_view.filter("{} = 0".format(state_col))
+    df_view = df_view.filter("{} = 1".format(state_col))
 
     return df_view
 
+def compare_schema(df_a, df_b, exclude_cols=[]):
+    assert isinstance(df_a, pyspark.sql.dataframe.DataFrame)
+    assert isinstance(df_b, pyspark.sql.dataframe.DataFrame)
+
+    a_columns = set([col for col in df_a.dtypes if col[0] not in exclude_cols])
+    b_columns = set([col for col in df_b.dtypes if col[0] not in exclude_cols])
+
+    return a_columns == b_columns
+
 def diff(df_a, df_b, exclude_cols=[]):
     """
-    Returns all rows of a which are not in b.
+    Returns all different rows of between a and b.
     Column ordering as provided by the second dataframe
+    In case of different schema, return False
 
     :param df_a: first dataframe
     :param df_b: second dataframe
     :param exclude_cols: columns to be excluded
-    :return: a diff dataframe
+    :return: a dataframe contain row in a but not in b
+    :return: a dataframe contain row in b but not in a
     """
 
     assert isinstance(df_a, pyspark.sql.dataframe.DataFrame)
     assert isinstance(df_b, pyspark.sql.dataframe.DataFrame)
 
+    if not compare_schema(df_a, df_b):
+        return False
+
     # get columns
-    colnames = common_columns(df_a, df_b, exclude_cols)
-    
+    colnames = [col for col in df_b.columns if col not in exclude_cols]
+
     # return diff
-    if df_b.count():
-        return df_a.select(colnames).subtract(df_b.select(colnames))
-    else:
-        return df_a.select(colnames)
-    
+    a_over_b = df_a.select(colnames).exceptAll(df_b.select(colnames))
+    b_over_a = df_b.select(colnames).exceptAll(df_a.select(colnames))
+    return a_over_b, b_over_a
+
 def to_timestamp(obj, column, tzone='UTC'):
     f = F.col(column)
     datecol_type = obj.select(column).dtypes[0][1]
@@ -140,9 +154,10 @@ def to_timestamp(obj, column, tzone='UTC'):
 
 def add_version_column(obj, version_time=None, version_colname = '_version', tzone='UTC'):
     version = version_time if version_time else datetime.now(pytz.timezone(tzone if tzone else 'UTC'))
-    ts = datetime.strftime(version, '%Y-%m-%d-%H-%M-%S')
+    if type(version) == datetime:
+        version = datetime.strftime(version, '%Y-%m-%d-%H-%M-%S')
     if version_colname not in obj.columns:
-        obj = obj.withColumn(version_colname, F.lit(ts))
+        obj = obj.withColumn(version_colname, F.lit(version))
     else:
         logging.error('Invalid version column name')
     return obj
