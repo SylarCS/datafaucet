@@ -661,7 +661,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             if md['service'] in ['hdfs', 's3a']:
                 version = self.find_version(versionAsOf, path, provider)
                 if not version:
-                    logging.error('No version of data detected', extra={'md': md})
+                    logging.warning('No version of data detected', extra={'md': md})
                     return obj
                 version = version.strftime('%Y-%m-%d-%H-%M-%S')
                 url = f'{md["url"]}/_version={version}'
@@ -1029,7 +1029,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     logging.error(f'Invalid store method "{store_method}"',
                         extra={'md': to_dict(md)})
                     return False
-                event.show()
                 event.write.format('parquet').save(md['url'], **options)
             else:
                 logging.error(
