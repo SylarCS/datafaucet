@@ -646,7 +646,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
     def load_event_log(self, path=None, provider=None, versionAsOf=None, *args, **kwargs):
         obj = None
-
         md = Resource(
                 path,
                 provider,
@@ -994,7 +993,6 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
     def save_event_log(self, obj, path=None, provider=None, mode=None,
                         store_method='cdc', replaceWhere=None, **kwargs):
-
         md = Resource(
                 path,
                 provider,
@@ -1005,31 +1003,33 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         # after collecting from metadata, or method call, define defaults
         options['mode'] = options['mode'] or 'append'
+        options['partitionBy'] = options['partitionBy'] if 'partitionBy' in options else []
 
         ts_start = timer()
         try:
             if md['service'] in ['hdfs', 's3a']:
-                if store_method == 'snapshots' or options['mode'] == 'overwrite':
+                if store_method == 'snapshots':
                     event = dataframe.add_version_column(obj)
-                    options['partitionBy'] = ['_version'] + (options['partitionBy'] or [])
+                    options['partitionBy'] = ['_version'] + options['partitionBy']
                 elif store_method == 'cdc':
                     current_view = self.load_event_log(path, provider)
-                    diff_data = dataframe.diff(obj, current_view, ['_version', '_updated', '_state'])
-                    if diff_data:
-                        df_del = diff_data[0].withColumn('_state', F.lit(0))
-                        df_add = diff_data[1].withColumn('_state', F.lit(1))
-                        event = df_del.union(df_add)
-                        version = self.find_version(md)
-                        event = dataframe.add_version_column(event, version_time=version)
-                    else:
+                    if options['mode'] != 'append' or not current_view or not dataframe.compare_schema(obj, current_view):
                         event = obj.withColumn('_state', F.lit(1))
-                        event = dataframe.add_version_column(obj)
+                        event = dataframe.add_version_column(event)
+                    else:
+                        df_add, df_del = dataframe.diff(obj, current_view)
+                        df_add = df_add.withColumn('_state', F.lit(1))
+                        df_del = df_del.withColumn('_state', F.lit(0))
+                        event = df_del.union(df_add)
+                        version = self.find_version(path=path, provider=provider)
+                        event = dataframe.add_version_column(event, version_time=version)
                     event = dataframe.add_update_column(event)
-                    options['partitionBy'] = ['_version', '_updated'] + (options['partitionBy'] or [])
+                    options['partitionBy'] = ['_version', '_updated'] + options['partitionBy']
                 else:
                     logging.error(f'Invalid store method "{store_method}"',
                         extra={'md': to_dict(md)})
                     return False
+                event.show()
                 event.write.format('parquet').save(md['url'], **options)
             else:
                 logging.error(

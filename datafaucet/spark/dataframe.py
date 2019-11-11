@@ -72,7 +72,7 @@ def common_columns(df_a, df_b=None, exclude_cols=[]):
     # as provided by df_b or df_a column method
     return [x for x in cols if x in c]
 
-def view(df, timestamp, state_col='_state', updated_col='_updated', hash_col='_hash'):
+def view(df, timestamp=None, state_col='_state', updated_col='_updated', hash_col='_hash'):
     """
     Calculate a view from a log of events by performing the following actions:
         - squashing the events for each entry record to the last one
@@ -88,20 +88,12 @@ def view(df, timestamp, state_col='_state', updated_col='_updated', hash_col='_h
     if state_col not in df.columns:
         return df
 
-    selected_columns = colnames + ['_last.*']
-    groupby_columns = colnames
+    if timestamp:
+        df = df.filter(F.col(updated_col) <= timestamp)
 
-    # groupby hash_col first if available
-    if hash_col in df.columns:
-        selected_columns = selected_columns + [hash_col]
-        groupby_columns = [hash_col] + groupby_columns
-
-    df = df.filter(F.col(updated_col) <= timestamp)
-    row_groups = df.groupBy(groupby_columns)
-    get_sorted_array = F.sort_array(F.collect_list(F.struct(F.col(updated_col), F.col(state_col))), asc = False)
-    df_view = row_groups.agg(get_sorted_array.getItem(0).alias('_last')).select(*selected_columns)
-    df_view = df_view.filter("{} = 1".format(state_col))
-
+    windowval = Window.partitionBy(colnames).orderBy(state_col).rowsBetween(Window.unboundedPreceding, 0)
+    df = df.withColumn('_state_value', F.sum(state_col).over(windowval)*2 - F.row_number().over(windowval))
+    df_view= df.filter(F.col('_state_value') > 0).select(colnames)
     return df_view
 
 def compare_schema(df_a, df_b, exclude_cols=[]):
@@ -128,9 +120,7 @@ def diff(df_a, df_b, exclude_cols=[]):
 
     assert isinstance(df_a, pyspark.sql.dataframe.DataFrame)
     assert isinstance(df_b, pyspark.sql.dataframe.DataFrame)
-
-    if not compare_schema(df_a, df_b):
-        return False
+    assert compare_schema(df_a, df_b, exclude_cols)
 
     # get columns
     colnames = [col for col in df_b.columns if col not in exclude_cols]
