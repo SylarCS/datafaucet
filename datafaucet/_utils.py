@@ -7,6 +7,11 @@ from copy import deepcopy
 import traceback
 from subprocess import Popen, PIPE
 
+import pandas as pd
+import dateutil.parser as dp
+from datetime import datetime
+import numbers
+
 def print_trace(limit=None): 
     stack =([str([x[0], x[1], x[2]]) for x in traceback.extract_stack(limit=limit)])
     print('trace')
@@ -172,3 +177,59 @@ def python_version():
 
 def str_join(lst, sep=' '):
     return sep.join([x for x in lst if x])
+
+def get_filter_cond(filter_column=None, filter_window=None, filter_start=None, filter_end=None):
+    filter_cond = ''
+    if not filter_column:
+        return filter_cond
+
+    try:
+        filter_window = pd.to_timedelta(filter_window) if isinstance(filter_window, str) else filter_window
+        filter_start = dp.isoparse(filter_start) if isinstance(filter_start, str) else filter_start
+        filter_end = dp.isoparse(filter_end) if isinstance(filter_end, str) else filter_end
+
+        if filter_window and filter_start and not filter_end:
+            filter_end = filter_start + filter_window
+
+        if filter_window and filter_end and not filter_start:
+            filter_start = filter_end - filter_window
+    except:
+        pass
+
+    filter_start = datetime.strftime(filter_start, '%d/%b/%Y %H:%M:%S') if isinstance(filter_start, datetime) else filter_start
+    filter_end = datetime.strftime(filter_end, '%d/%b/%Y %H:%M:%S') if isinstance(filter_end, datetime) else filter_end
+
+#     filter_start_str = f"{filter_column} >= '{filter_start}'" if isinstance(filter_start, str) else f"{filter_column} >= {filter_start}"
+#     filter_end_str = f"{filter_column} <= '{filter_end}'" if isinstance(filter_end, str) else f"{filter_column} <= {filter_end}"
+#     if filter_start_str and filter_end_str:
+#         filter_cond = f"WHERE {filter_start_str} AND {filter_end_str}"
+#     else:
+#         filter_cond = filter_start_str or filter_end_str or filter_cond
+
+    if filter_start and not filter_end:
+        if isinstance(filter_start, str):
+            filter_cond = f"WHERE {filter_column} >= '{filter_start}'"
+        elif isinstance(filter_start, numbers.Number):
+            filter_cond = f"WHERE {filter_column} >= {filter_start}"
+        else:
+            print('Wrong data type of start value for filtering')
+
+    elif filter_end and not filter_start:
+        if isinstance(filter_end, str):
+            filter_cond = f"WHERE {filter_column} <= '{filter_end}'"
+        elif isinstance(filter_end, numbers.Number):
+            filter_cond = f"WHERE {filter_column} <= {filter_end}"
+        else:
+            print('Wrong data type of end value for filtering')
+
+    elif filter_start and filter_end:
+        if isinstance(filter_start, str) and isinstance(filter_end, str):
+            filter_cond = f"WHERE {filter_column} >= '{filter_start}' AND {filter_column} <= '{filter_end}'"
+        elif isinstance(filter_start, numbers.Number) and isinstance(filter_end, numbers.Number):
+            filter_cond = f"WHERE {filter_column} >= {filter_start} AND {filter_column} <= {filter_end}"
+        else:
+            print('Inconsistent data type of start and end value for filtering')
+    else:
+        print('Cannot get start or end value for filtering')
+
+    return filter_cond

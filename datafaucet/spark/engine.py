@@ -13,7 +13,7 @@ from datafaucet.resources import Resource, get_local, urnparse
 from datafaucet.yaml import YamlDict, to_dict
 
 from datafaucet._utils import python_version, get_hadoop_version_from_system
-from datafaucet._utils import get_tool_home, run_command, str_join, merge
+from datafaucet._utils import get_tool_home, run_command, str_join, merge, get_filter_cond
 
 import pandas as pd
 from datafaucet.spark import dataframe
@@ -573,36 +573,64 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         self.load_log(md, options, ts_start)
         return obj
 
-    def load_jdbc(self, path=None, provider=None, *args, **kwargs):
+    def load_jdbc(self, path=None, provider=None, partitionColumn=None, numPartitions=None,
+                filter_column=None, filter_window=None, filter_start=None, filter_end=None, **kwargs):
         obj = None
 
         md = Resource(
                 path,
                 provider,
+                partitionColumn=partitionColumn,
+                numPartitions=numPartitions,
+                filter_column=filter_column,
+                filter_window=filter_window,
+                filter_start=filter_start,
+                filter_end=filter_end,
                 format='jdbc',
                 **kwargs)
-
         options = md['options']
 
         # start the timer for logging
         ts_start = timer()
         try:
             if md['service'] in ['sqlite', 'mysql', 'postgres', 'mssql', 'clickhouse', 'oracle']:
+                filter_condition = get_filter_cond(options['filter_column'], \
+                                options['filter_window'], options['filter_start'], options['filter_end'])
+
+                query = f"(SELECT * FROM {md['table']} {filter_condition})"
+
+                if options['partitionColumn']:
+                    scouting_query = f"""(SELECT MIN({options['partitionColumn']}) MIN, MAX({options['partitionColumn']}) MAX
+                                          FROM {md['table']} {filter_condition})"""
+                    scouting_result = self.context.read \
+                                        .format('jdbc') \
+                                        .option('url', md['url']) \
+                                        .option('dbtable', scouting_query) \
+                                        .option('driver', md['driver']) \
+                                        .option('user', md['user']) \
+                                        .option('password', md['password']) \
+                                        .load().collect()[0]
+
+                    options['numPartitions'] = options['numPartitions'] or self.context.sparkContext.defaultParallelism
+                    options['lowerBound'] = int(scouting_result['MIN'])
+                    options['upperBound'] = int(scouting_result['MAX'])
+
+                load_options = {k: options[k] for k in options if options[k]}
                 obj = self.context.read \
                     .format('jdbc') \
                     .option('url', md['url']) \
-                    .option("dbtable", md['table']) \
-                    .option("driver", md['driver']) \
-                    .option("user", md['user']) \
+                    .option('dbtable', query) \
+                    .option('driver', md['driver']) \
+                    .option('user', md['user']) \
                     .option('password', md['password']) \
-                    .load(**options)
+                    .load(**load_options)
+
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
                 return obj
-
-        except AnalysisException as e:
+        except AnalysisException as e: 
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error(str(e), extra={'md': md})
@@ -1255,7 +1283,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     fs = FileSystem.get(URI(url), sc._jsc.hadoopConfiguration())
                     obj = fs.listStatus(Path(path))
                 except:
-                    logging.error(f'An error occurred accessing {url}{path}')
+                    logging.warning(f'An error occurred accessing {url}{path}')
                     obj = []
 
                 lst = []
@@ -1365,4 +1393,3 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             raise e
 
         return df_empty
-
