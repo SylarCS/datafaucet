@@ -59,6 +59,7 @@ class LoggerAdapter(logging.LoggerAdapter):
             'dfc_filepath': None,
             'dfc_reponame': None,
             'dfc_repohash': None,
+            'dfc_repourl': None,
             'dfc_funcname': None,
             'dfc_profile': None,
             'dfc_data': {}
@@ -134,6 +135,7 @@ class JsonFormatter(logging.Formatter):
             'sid': logr.dfc_sid,
             'repohash': logr.dfc_repohash,
             'reponame': logr.dfc_reponame,
+            'repourl': logr.dfc_repourl,
             'username': logr.dfc_username,
             'filepath': logr.dfc_filepath,
             'funcname': logr.dfc_funcname,
@@ -260,6 +262,7 @@ def init(
     filepath=None,
     reponame=None,
     repohash=None,
+    repourl=None,
     profile=None):
     
     global _logger
@@ -291,6 +294,7 @@ def init(
         'dfc_sid': sid,
         'dfc_repohash': repohash,
         'dfc_reponame': reponame,
+        'dfc_repourl': repourl,
         'dfc_username': username,
         'dfc_filepath': filepath,
         'dfc_profile': profile
