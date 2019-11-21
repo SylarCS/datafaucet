@@ -573,15 +573,15 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         self.load_log(md, options, ts_start)
         return obj
 
-    def load_jdbc(self, path=None, provider=None, partitionColumn=None, numPartitions=None,
+    def load_jdbc(self, path=None, provider=None, partition_column=None, num_partitions=None,
                 filter_column=None, filter_window=None, filter_start=None, filter_end=None, **kwargs):
         obj = None
 
         md = Resource(
                 path,
                 provider,
-                partitionColumn=partitionColumn,
-                numPartitions=numPartitions,
+                partition_column=partition_column,
+                num_partitions=num_partitions,
                 filter_column=filter_column,
                 filter_window=filter_window,
                 filter_start=filter_start,
@@ -599,8 +599,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
                 query = f"(SELECT * FROM {md['table']} {filter_condition}) query"
 
-                if options['partitionColumn']:
-                    scouting_query = f"""(SELECT MIN({options['partitionColumn']}) MIN, MAX({options['partitionColumn']}) MAX
+                if options['partition_column']:
+                    scouting_query = f"""(SELECT MIN({options['partition_column']}) MIN, MAX({options['partition_column']}) MAX
                                           FROM {md['table']} {filter_condition}) scouting_query"""
                     scouting_result = self.context.read \
                                         .format('jdbc') \
@@ -611,7 +611,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                                         .option('password', md['password']) \
                                         .load().collect()[0]
 
-                    options['numPartitions'] = options['numPartitions'] or self.context.sparkContext.defaultParallelism
+                    options['partitionColumn'] = options['partition_column']
+                    options['numPartitions'] = options['num_partitions'] or self.context.sparkContext.defaultParallelism
                     options['lowerBound'] = int(scouting_result['MIN'])
                     options['upperBound'] = int(scouting_result['MAX'])
 
