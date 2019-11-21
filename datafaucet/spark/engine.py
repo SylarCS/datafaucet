@@ -597,11 +597,11 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 filter_condition = get_filter_cond(options['filter_column'], \
                                 options['filter_window'], options['filter_start'], options['filter_end'])
 
-                query = f"(SELECT * FROM {md['table']} {filter_condition})"
+                query = f"(SELECT * FROM {md['table']} {filter_condition}) query"
 
                 if options['partitionColumn']:
                     scouting_query = f"""(SELECT MIN({options['partitionColumn']}) MIN, MAX({options['partitionColumn']}) MAX
-                                          FROM {md['table']} {filter_condition})"""
+                                          FROM {md['table']} {filter_condition}) scouting_query"""
                     scouting_result = self.context.read \
                                         .format('jdbc') \
                                         .option('url', md['url']) \
