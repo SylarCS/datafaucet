@@ -295,15 +295,7 @@ def get_format(md):
 
     # extract the format from file extension
     #‘.gz’, ‘.bz2’, ‘.zip’, ‘.snappy’, '.deflate'
-    path, ext = os.path.splitext(md['path'])
-    if get_compression(md['path']):
-        _, ext = os.path.splitext(path)
-
-    if ext and ext[0]=='.':
-        ext = ext[1:]
-
-    # default is None
-    return ext or None
+    return get_compression(md['path'])
 
 def get_driver(service):
     drivers = {
