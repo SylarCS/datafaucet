@@ -695,7 +695,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 version = version.strftime('%Y-%m-%d-%H-%M-%S')
                 url = f'{md["url"]}/_version={version}'
                 obj = self.context.read.format('parquet').load(url, **options)
-                obj = dataframe.view(obj, versionAsOf)
+                obj = dataframe.squash(obj, versionAsOf)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
