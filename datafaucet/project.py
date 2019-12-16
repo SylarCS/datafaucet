@@ -31,16 +31,16 @@ class Project(metaclass = Singleton):
         self._session_id = 0
         self._username = None
         self._repo = {}
-        
+
         self._filepath = None
         self._dotenv_path = None
         self._metadata_files = {}
         self._notebook_files = {}
         self._python_files = {}
-        
+
         self.loaded = False
         self._no_reload = False
-    
+
     def load(self, profile='default', rootpath=None):
         """
         Performs the following steps:
@@ -50,7 +50,7 @@ class Project(metaclass = Singleton):
             - setup and start the data engine
 
         :param profile: load the given metadata profile (default: 'default')
-        
+
         :param rootpath: root directory for loaded project 
                default behaviour: search parent dirs to detect rootdir by 
                looking for a '__main__.py' or 'main.ipynb' file. 
@@ -90,27 +90,27 @@ class Project(metaclass = Singleton):
             - loggers
 
         For more information about metadata configuration,
-        type `help(datafaucet.project.metadata)`    
+        type `help(datafaucet.project.metadata)`
         """
-        
+
         if self.loaded and self._no_reload:
             logging.notice(
                 f"Profile {self._profile} already loaded. " 
                  "Skipping project.load()")
             return self
-        
+
         # set rootpath
         paths.set_rootdir(rootpath)
 
         # set loaded to false
         self.loaded = False
-        
+
         # set username
         self._username = getpass.getuser()
-        
+
         # get repo data
         self._repo = repo_data()
-        
+
         # set session name
         L = [self._profile, self._repo.get('name')]
         self._session_name = '-'.join([x for x in L if x])
@@ -120,10 +120,10 @@ class Project(metaclass = Singleton):
 
         # get currently running script path
         self._script_path = files.get_script_path(paths.rootdir())
-        
+
         # set dotenv default file, check the file exists
         self._dotenv_path = files.get_dotenv_path(paths.rootdir())
-        
+
         # get files
         self._metadata_files = files.get_metadata_files(paths.rootdir())
         self._notebook_files = files.get_jupyter_notebook_files(paths.rootdir())
@@ -138,45 +138,45 @@ class Project(metaclass = Singleton):
         try:
             md_paths = default_md_files + project_md_files
             dotenv_path = abspath(self._dotenv_path, paths.rootdir())
-            
+
             metadata.load(profile,md_paths,dotenv_path)
         except ValueError as e:
             print(e)
-            
+
         # bail if no metadata
         if metadata.profile is None:
             raise ValueError('No valid metadata to load.')
-            
+
         # set profile from metadata
         self._profile_name = metadata.info()['active']
 
         # add roothpath to the list of python sys paths
         if paths.rootdir() not in sys.path:
             sys.path.append(paths.rootdir())
-        
+
         # stop existing engine
         if self._engine:
             self._engine.stop()
 
         #services
         services = dict()
-        
+
         all_aliases  = list(metadata.profile()['providers'].keys())
-        
+
         # get services from aliases
         for alias in all_aliases:
             r = Resource(alias)
             services[r['service']] = r
-        
+
         # get one service from each type to 
         # load drivers, jars etc via the engine init
         services = list(services.values())
-        
+
         #initialize the engine
         md = metadata.profile()['engine']
         engines.Engine(
             md['type'],
-            session_name=self._session_name,
+            session_name=self._session_name if self._session_name else md['jobname'],
             session_id=self._session_id,
             master = md['master'],
             timezone=md['timezone'],
@@ -200,10 +200,10 @@ class Project(metaclass = Singleton):
             self._repo['url'],
             self._profile_name
         )
- 
+
         # set loaded to True
         self.loaded = True
- 
+
         # return object
         return self
 
@@ -213,7 +213,7 @@ class Project(metaclass = Singleton):
                 "No project profile loaded. " +
                 "Execute datafaucet.project.load(...) first.")
             return None
-        
+
         return YamlDict({
             'version': __version__,
             'username': self._username,
@@ -228,7 +228,7 @@ class Project(metaclass = Singleton):
             'metadata_files': self._metadata_files,
             'repository': self._repo
         })
-        
+
 def info():
     return Project().info()
 
