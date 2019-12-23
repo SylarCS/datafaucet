@@ -72,7 +72,7 @@ def common_columns(df_a, df_b=None, exclude_cols=[]):
     # as provided by df_b or df_a column method
     return [x for x in cols if x in c]
 
-def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
+def view(df, timestamp=None, state_col='_state', updated_col='_updated', hash_col='_hash'):
     """
     Calculate a view from a log of events by performing the following actions:
         - squashing the events for each entry record to the last one
@@ -88,6 +88,10 @@ def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
     if state_col not in df.columns:
         return df
 
+    # Filter historical data
+    if timestamp:
+        df = df.filter(F.col(updated_col) <= timestamp)
+
     selected_columns = colnames + ['_last.*']
     groupby_columns = colnames
 
@@ -99,7 +103,7 @@ def view(df, state_col='_state', updated_col='_updated', hash_col='_hash'):
     row_groups = df.groupBy(groupby_columns)
     get_sorted_array = F.sort_array(F.collect_list(F.struct( F.col(updated_col), F.col(state_col))),asc = False)
     df_view = row_groups.agg(get_sorted_array.getItem(0).alias('_last')).select(*selected_columns)
-    df_view = df_view.filter("{} = 0".format(state_col))
+    df_view = df_view.filter("{} = 0".format(state_col)).drop(updated_col, state_col)
 
     return df_view
 

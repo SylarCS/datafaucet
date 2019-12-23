@@ -691,6 +691,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 version = self.find_version(versionAsOf, path, provider)
                 if not version:
                     logging.warning('No version of data detected', extra={'md': md})
+                    obj = dataframe.view(self.load_parquet(path, provider), versionAsOf)
                     return obj
                 version = version.strftime('%Y-%m-%d-%H-%M-%S')
                 url = f'{md["url"]}/_version={version}'
